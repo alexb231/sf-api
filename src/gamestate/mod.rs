@@ -31,9 +31,9 @@ use crate::{
     response::Response,
 };
 
-/// Represent the full state of the game at some point in time
 #[derive(Debug, Clone, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+/// Represent the full state of the game at some point in time
 pub struct GameState {
     /// Everything, that can be considered part of the character, or his
     /// immediate surrounding and not the rest of the world
@@ -78,7 +78,7 @@ pub struct GameState {
     pub lookup: Lookup,
     /// Anything you can find in the mail tab of the official client
     pub mail: Mail,
-    /// The raw timestamp, that the server has sent us
+    /// The raw timestamp, that the server has send us
     last_request_timestamp: i64,
     /// The amount of sec, that the server is ahead of us in seconds (can be
     /// negative)
@@ -86,10 +86,9 @@ pub struct GameState {
 }
 
 const SHOP_N: usize = 6;
-
-/// A shop, that you can buy items from
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+/// A shop, that you can buy items from
 pub struct Shop {
     pub typ: ShopType,
     /// The items this shop has for sale
@@ -103,6 +102,7 @@ impl Default for Shop {
             price: u32::MAX,
             mushroom_price: u32::MAX,
             model_id: 0,
+            model_id_raw: 0,
             class: None,
             type_specific_val: 0,
             attributes: EnumMap::default(),
@@ -113,7 +113,6 @@ impl Default for Shop {
             upgrade_count: 0,
             item_quality: 0,
             is_washed: false,
-            full_model_id: 0,
         });
 
         Self {
@@ -124,16 +123,9 @@ impl Default for Shop {
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Copy)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ShopPosition {
-    pub typ: ShopType,
-    pub pos: usize,
-}
-
-impl std::fmt::Display for ShopPosition {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}/{}", self.typ as usize, self.pos + 1)
-    }
+    pub(crate) typ: ShopType,
+    pub(crate) pos: usize,
 }
 
 impl ShopPosition {
@@ -251,7 +243,6 @@ impl GameState {
                 | "languagecodelist"
                 | "tracking"
                 | "skipvideo"
-                | "webshopid"
                 | "cidstring"
                 | "mountexpired"
                 | "tracking_netto"
@@ -290,7 +281,20 @@ impl GameState {
                         }
                     }
                 }
-                "sfhomeid" => {}
+                "sfhomeid" => {
+                    let id = from_sf_string(val.as_str());
+                    let id = id.trim();
+                    if !id.is_empty() {
+                        self.character.sf_home_id = Some(id.to_string());
+                    }
+                }
+                "webshopid" => {
+                    let id = from_sf_string(val.as_str());
+                    let id = id.trim();
+                    if !id.is_empty() {
+                        self.character.webshop_id = Some(id.to_string());
+                    }
+                }
                 "backpack" => {
                     let data: Vec<i64> = val.into_list("backpack")?;
                     self.character.inventory.backpack = data
@@ -320,7 +324,6 @@ impl GameState {
                     clippy::cast_sign_loss,
                     clippy::cast_possible_truncation
                 )]
-                #[allow(deprecated)]
                 "toiletstate" => {
                     let vals: Vec<i64> = val.into_list("toilet state")?;
                     if vals.len() < 3 {
@@ -359,8 +362,8 @@ impl GameState {
                 "systemmessagelist" => {}
                 "newslist" => {}
                 "dummieequipment" => {
-                    let m: Vec<i64> = val.into_list("mannequin")?;
-                    self.character.mannequin =
+                    let m: Vec<i64> = val.into_list("manequin")?;
+                    self.character.manequin =
                         Some(Equipment::parse(&m, server_time)?);
                 }
                 "owntower" => {
@@ -461,15 +464,6 @@ impl GameState {
                         .update_prices(
                             &val.into_list("fortress upgrade prices")?,
                         )?;
-                }
-                "Arenarank" => {
-                    if let Some(uw) = self.underworld.as_mut() {
-                        uw.lure_suggestion = val
-                            .as_str()
-                            .parse::<u32>()
-                            .ok()
-                            .map(LureSuggestion);
-                    }
                 }
                 "witch" => {
                     self.witch
@@ -599,13 +593,6 @@ impl GameState {
                         .get_or_insert_with(Default::default)
                         .name
                         .set(val.as_str());
-                }
-                "otherplayersaveequipment" => {
-                    let data: Vec<i64> =
-                        val.into_list("other player equipment")?;
-                    other_player
-                        .get_or_insert_with(Default::default)
-                        .equipment = Equipment::parse(&data, server_time)?;
                 }
                 "fortresspricereroll" => {
                     self.fortress
@@ -839,19 +826,14 @@ impl GameState {
                                 target: data
                                     .cfpget(0, "expedition typ", |a| a)?
                                     .unwrap_or_default(),
+                                thirst_for_adventure_sec: data
+                                    .csiget(6, "exp alu", 600)?,
                                 location_1: data
                                     .cfpget(4, "exp loc 1", |a| a)?
                                     .unwrap_or_default(),
                                 location_2: data
                                     .cfpget(5, "exp loc 2", |a| a)?
                                     .unwrap_or_default(),
-                                thirst_for_adventure_sec: data
-                                    .csiget(6, "exp alu", 600)?,
-                                special: data.cfpget(
-                                    7,
-                                    "exp special",
-                                    |a| a,
-                                )?,
                             })
                         })
                         .collect::<Result<_, _>>()?;
@@ -922,7 +904,7 @@ impl GameState {
                     exp.current_floor = data.csiget(0, "clearing", 0)?;
                     exp.heroism = data.csiget(13, "heroism", 0)?;
 
-                    exp.busy_since =
+                    let _busy_since =
                         data.cstget(15, "exp start", server_time)?;
                     exp.busy_until =
                         data.cstget(16, "exp busy", server_time)?;
@@ -1264,6 +1246,20 @@ impl GameState {
                     // 272500/1/295000/2/317500/0/340000/1/362500/2/385000/0/
                     // 407500/1/430000/2/452500/0/475000/1
                 }
+                "otherplayersaveequipment" => {
+                    let data: Vec<i64> =
+                        val.into_list("other player equipment")?;
+                    other_player
+                        .get_or_insert_with(Default::default)
+                        .equipment = Equipment::parse(&data, server_time)?;
+                }
+                "Arenarank" => {
+                    self.fortress
+                        .get_or_insert_with(Default::default)
+                        .suggested_underworld_enemy_rank = val
+                        .into::<u32>("other player suggested underworld rank")
+                        .ok();
+                }
                 "gtraidparticipants" => {
                     let all: Vec<_> = val.as_str().split('/').collect();
                     let hellevator = self
@@ -1589,20 +1585,6 @@ impl GameState {
                         _ => Reward::parse(&vals).ok(),
                     };
                 }
-                "fortresschances" => {
-                    // chances for different gems to drop in the gem mine / 100
-                    // big/medium/small/orange/black/others
-                    // 3334/3333/3333/0/1700/8300
-                }
-                "deedsandtitlesplayersave" => {
-                    // The deeds of glory of the player
-                    // rank?/110/3199/14/4/0/0/0/0/1/118/0/119/0/94/0/0/0/0/0/0/
-                    // 0
-                }
-                "deedshelves" => {
-                    // deedshelves (subkey => 1)
-                    // 1
-                }
                 // This is the extra bonus effect all treats get that day
                 x if x.contains("dungeonenemies") => {
                     // I `think` we do not need this
@@ -1614,6 +1596,10 @@ impl GameState {
                     warn!("Update ignored {x} -> {val:?}");
                 }
             }
+        }
+
+        if let Some(exp) = self.tavern.expeditions.active_mut() {
+            exp.adjust_bounty_heroism();
         }
 
         if let Some(og) = other_guild {
@@ -1628,23 +1614,23 @@ impl GameState {
             self.dungeons.portal = None;
         }
 
-        if let Some(pets) = &self.pets
-            && pets.rank == 0
-        {
-            self.pets = None;
+        if let Some(pets) = &self.pets {
+            if pets.rank == 0 {
+                self.pets = None;
+            }
         }
-        if let Some(t) = &self.guild
-            && t.name.is_empty()
-        {
-            self.guild = None;
+        if let Some(t) = &self.guild {
+            if t.name.is_empty() {
+                self.guild = None;
+            }
         }
         if self.fortress.is_some() && self.character.level < 25 {
             self.fortress = None;
         }
-        if let Some(t) = &self.underworld
-            && t.buildings[UnderworldBuildingType::HeartOfDarkness].level < 1
-        {
-            self.underworld = None;
+        if let Some(t) = &self.underworld {
+            if t.buildings[UnderworldBuildingType::HeartOfDarkness].level < 1 {
+                self.underworld = None;
+            }
         }
 
         // Witch is automatically unlocked with level 66
@@ -1703,6 +1689,8 @@ impl GameState {
             return Ok(());
         }
 
+        self.character.player_save_id =
+            data.csiget(0, "player save id", 0u64)?;
         self.character.player_id = data.csiget(1, "player id", 0)?;
         self.character.portrait =
             Portrait::parse(data.skip(17, "TODO")?).unwrap_or_default();
@@ -1969,9 +1957,9 @@ impl StringSetExt for String {
     }
 }
 
-/// The cost of something
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+/// The cost of something
 pub struct NormalCost {
     /// The amount of silver something costs
     pub silver: u64,

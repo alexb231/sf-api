@@ -1,3 +1,4 @@
+// Note: let_chains is stable since Rust 1.88.0, no feature flag needed
 #![warn(
     clippy::indexing_slicing,
     clippy::unwrap_used,

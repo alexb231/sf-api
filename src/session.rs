@@ -1,27 +1,38 @@
-use std::{borrow::Borrow, fmt::Debug, str::FromStr, time::Duration};
-
 use base64::Engine;
 use log::{error, trace, warn};
-use reqwest::{Client, Proxy, header::*};
+use reqwest::{header::*, Client};
+use serde_json::Value;
+use std::collections::HashMap;
+use std::fs::OpenOptions;
+use std::io::Read;
+use std::{
+    borrow::Borrow,
+    env,
+    fmt::Debug,
+    path::PathBuf,
+    str::FromStr,
+    time::Duration,
+};
 use url::Url;
 
-pub use crate::response::*;
 use crate::{
     command::Command,
     error::SFError,
     gamestate::{
-        GameState,
         character::{Class, Gender, Race},
+        GameState,
     },
     misc::{
-        DEFAULT_CRYPTO_ID, DEFAULT_CRYPTO_KEY, DEFAULT_SESSION_ID, HASH_CONST,
-        sha1_hash,
+        sha1_hash, DEFAULT_CRYPTO_ID, DEFAULT_CRYPTO_KEY, DEFAULT_SESSION_ID,
+        HASH_CONST,
     },
 };
+#[allow(deprecated)]
+pub use crate::{misc::decrypt_url, response::*};
 
-/// The session, that manages the server communication for a character
 #[derive(Debug, Clone)]
 #[allow(clippy::struct_field_names)]
+/// The session, that manages the server communication for a character
 pub struct Session {
     /// The information necessary to log in
     login_data: LoginData,
@@ -30,7 +41,7 @@ pub struct Session {
     /// The id of our session. This will remain the same as long as our login
     /// is valid and nobody else logs in
     session_id: String,
-    /// The amount of commands we have sent
+    /// The amount of commands we have send
     player_id: u32,
     login_count: u32,
     crypto_id: String,
@@ -42,9 +53,9 @@ pub struct Session {
     options: ConnectionOptions,
 }
 
-/// The password of a character, hashed in the way, that the server expects
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+/// The password of a character, hashed in the way, that the server expects
 pub struct PWHash(String);
 
 impl PWHash {
@@ -142,7 +153,7 @@ impl Session {
         self.session_id.chars().any(|a| a != '0')
     }
 
-    /// Logs in the session by sending a login response to the server and
+    /// Logges in the session by sending a login response to the server and
     /// updating the internal cryptography values. If the session is currently
     /// logged in, this also clears the existing state beforehand.
     ///
@@ -323,7 +334,7 @@ impl Session {
     ///   server is running an unsupported version
     /// - `EmptyResponse`: If the servers response was empty
     /// - `InvalidRequest`: If your response was invalid to send in some way
-    /// - `ConnectionError`: If the command could not be sent, or the response
+    /// - `ConnectionError`: If the command could not be send, or the response
     ///   could not successfully be received
     /// - `ParsingError`: If the response from the server was unexpected in some
     ///   way
@@ -382,8 +393,8 @@ impl Session {
         Ok(Session::new_full(ld, client, options, url))
     }
 
-    /// The username of the character, that this session is responsible for
     #[must_use]
+    /// The username of the character, that this session is responsible for
     pub fn username(&self) -> &str {
         match &self.login_data {
             LoginData::Basic { username, .. } => username,
@@ -395,23 +406,23 @@ impl Session {
         }
     }
 
+    #[cfg(feature = "sso")]
     /// Retrieves new sso credentials from its sf account. If the account
     /// already has new creds stored, these are read, otherwise the account will
     /// be logged in again
     ///
     /// # Errors
-    /// - `InvalidRequest`: If you call this function with anything other than
+    /// - `InvalidRequest`: If you call this function with anything other, than
     ///   an SSO-Session
     /// - Other errors, depending on if the session is able to renew the
     ///   credentials
-    #[cfg(feature = "sso")]
     pub async fn renew_sso_creds(&mut self) -> Result<(), SFError> {
         let LoginData::SSO {
             account, session, ..
         } = &mut self.login_data
         else {
             return Err(SFError::InvalidRequest(
-                "Can not renew sso credentials for a non-sso account",
+                "Can not renow sso credentials for a non-sso account",
             ));
         };
         let mut account = account.lock().await;
@@ -440,7 +451,7 @@ enum LoginData {
         /// A reference to the Account, that owns this character. Used to have
         /// an easy way of renewing credentials.
         account: std::sync::Arc<tokio::sync::Mutex<crate::sso::SFAccount>>,
-        /// The SSO account session. We "cache" this to A, not constantly do a
+        /// The SSO account session. We "cache" this to A, not constanty do a
         /// mutex lookup and B, because we have to know, if the accounts
         /// session has changed since we last used it. Otherwise we
         /// could have multiple characters all seeing an expired
@@ -454,11 +465,11 @@ enum LoginData {
     },
 }
 
+#[derive(Debug, Clone)]
 /// Stores all information necessary to talk to the server. Notably, if you
 /// clone this, instead of creating this multiple times for characters on a
 /// server, this will use the same `reqwest::Client`, which can have slight
 /// benefits to performance
-#[derive(Debug, Clone)]
 pub struct ServerConnection {
     url: url::Url,
     client: Client,
@@ -498,36 +509,32 @@ impl ServerConnection {
     }
 }
 
-pub(crate) fn reqwest_client(
-    options: &ConnectionOptions,
-) -> Option<reqwest::Client> {
+pub(crate) fn reqwest_client(options: &ConnectionOptions) -> Option<reqwest::Client> {
     let mut headers = HeaderMap::new();
     headers.insert(
         HeaderName::from_static(ACCEPT_LANGUAGE.as_str()),
         HeaderValue::from_static("en;q=0.7,en-US;q=0.6"),
     );
-    let mut builder = reqwest::Client::builder();
-    if let Some(settings) = &options.proxy {
-        let mut proxy = Proxy::https(&settings.url).ok()?;
-        if let Some(username) = &settings.username {
-            let password = settings.password.as_deref().unwrap_or("");
-            proxy = proxy.basic_auth(username, password);
-        }
-        builder = builder.proxy(proxy);
+
+    let mut builder = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .connect_timeout(Duration::from_secs(10))
+        .tcp_keepalive(Duration::from_secs(30))
+        .pool_idle_timeout(Duration::from_secs(60))
+        .default_headers(headers);
+
+    if let Some(ua) = options.user_agent.clone() {
+        builder = builder.user_agent(ua);
     }
 
-    let ua = options.user_agent.as_deref().unwrap_or(DEFAULT_USER_AGENT);
-    builder = builder.user_agent(ua);
-    builder.default_headers(headers).build().ok()
+    builder.build().ok()
 }
 
-/// Options, that change the behavior of the communication with the server
 #[derive(Debug, Clone)]
+/// Options, that change the behaviour of the communication with the server
 pub struct ConnectionOptions {
     /// A custom useragent to use, when sending requests to the server
     pub user_agent: Option<String>,
-    /// A custom proxy to use for network requests
-    pub proxy: Option<ProxySettings>,
     /// The server version, that this API was last tested on
     pub expected_server_version: u32,
     /// If this is true, any request to the server will error, if the servers
@@ -537,29 +544,62 @@ pub struct ConnectionOptions {
     pub error_on_unsupported_version: bool,
 }
 
-#[derive(Debug, Clone)]
-pub struct ProxySettings {
-    pub url: String,
-    pub username: Option<String>,
-    pub password: Option<String>,
-}
-
-static DEFAULT_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) \
-                                   AppleWebKit/537.36 (KHTML, like Gecko) \
-                                   Chrome/115.0.0.0 Safari/537.36";
-
 impl Default for ConnectionOptions {
     fn default() -> Self {
         Self {
-            user_agent: Some(DEFAULT_USER_AGENT.to_string()),
-            expected_server_version: 2018,
+            user_agent: Some(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
+                 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
+                    .to_string(),
+            ),
+            expected_server_version: 2016,
             error_on_unsupported_version: false,
-            proxy: None,
         }
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct GlobalSettings {
+    settings: HashMap<String, Value>,
+}
+
+fn global_settings_path() -> PathBuf {
+    env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("globalsettings.json")
+}
+
+fn get_u64_setting(
+    settings: &HashMap<String, Value>,
+    key: &str,
+    default: u64,
+) -> u64 {
+    settings
+        .get(key)
+        .and_then(|v| v.as_u64()) // try converting if no settings available yet
+        .unwrap_or(default)
+}
+
+pub async fn get_global_settings() -> Result<HashMap<String, Value>, String> {
+    let file_path = global_settings_path();
+    let mut file_content = String::new();
+    if let Ok(mut file) = OpenOptions::new().read(true).open(&file_path) {
+        file.read_to_string(&mut file_content)
+            .map_err(|e| e.to_string())?;
+
+        if !file_content.trim().is_empty() {
+            let global_settings: GlobalSettings =
+                serde_json::from_str(&file_content)
+                    .map_err(|e| e.to_string())?;
+            return Ok(global_settings.settings);
+        }
+    }
+    Ok(HashMap::new())
+}
+
+#[derive(Debug, Clone)]
 #[allow(clippy::module_name_repetitions)]
 pub struct SimpleSession {
     session: Session,
@@ -568,8 +608,23 @@ pub struct SimpleSession {
 
 impl SimpleSession {
     async fn short_sleep() {
-        tokio::time::sleep(Duration::from_millis(fastrand::u64(1000..2000)))
-            .await;
+        let global_map = get_global_settings().await.unwrap_or_default();
+        let configured_min = get_u64_setting(&global_map, "globalSleepTimesMin", 50);
+        let configured_max = get_u64_setting(&global_map, "globalSleepTimesMax", 100);
+
+        // Enforce a hard lower bound regardless of user settings.
+        let min_wait = configured_min.max(75);
+        let max_wait = configured_max.max(250);
+        let end_exclusive = if max_wait > min_wait {
+            max_wait.saturating_add(1)
+        } else {
+            min_wait.saturating_add(1)
+        };
+
+        tokio::time::sleep(Duration::from_millis(fastrand::u64(
+            min_wait..end_exclusive,
+        )))
+        .await;
     }
 
     /// Creates a new `SimpleSession`, by logging in a normal S&F character
@@ -593,12 +648,12 @@ impl SimpleSession {
         })
     }
 
+    #[cfg(feature = "sso")]
     ///  Creates new `SimpleSession`s, by logging in the S&S SSO account and
     /// returning all the characters associated with the account
     ///
     /// # Errors
     /// Have a look at `send_command` for a full list of possible errors
-    #[cfg(feature = "sso")]
     pub async fn login_sf_account(
         username: &str,
         password: &str,
@@ -666,7 +721,7 @@ impl SimpleSession {
     /// # Errors
     /// - `EmptyResponse`: If the servers response was empty
     /// - `InvalidRequest`: If your response was invalid to send in some way
-    /// - `ConnectionError`: If the command could not be sent, or the response
+    /// - `ConnectionError`: If the command could not be send, or the response
     ///   could not successfully be received
     /// - `ParsingError`: If the response from the server was unexpected in some
     ///   way
@@ -695,11 +750,11 @@ impl SimpleSession {
             }
         };
 
-        if let Some(gs) = &mut self.gamestate
-            && let Err(e) = gs.update(resp)
-        {
-            self.gamestate = None;
-            return Err(e);
+        if let Some(gs) = &mut self.gamestate {
+            if let Err(e) = gs.update(resp) {
+                self.gamestate = None;
+                return Err(e);
+            }
         }
 
         Ok(self.gamestate.as_mut().unwrap())

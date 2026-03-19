@@ -8,15 +8,15 @@ use num_traits::FromPrimitive;
 use strum::IntoEnumIterator;
 
 use super::{
-    AttributeType, Class, Emblem, Flag, Item, Potion, Race, Reward, SFError,
-    ServerTime,
     character::{Mount, Portrait},
     fortress::FortressBuildingType,
     guild::GuildRank,
     items::{Equipment, ItemType},
     unlockables::Mirror,
+    AttributeType, Class, Emblem, Flag, Item, Potion, Race, Reward, SFError,
+    ServerTime,
 };
-use crate::{PlayerId, misc::*};
+use crate::{misc::*, PlayerId};
 
 #[derive(Debug, Clone, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -37,10 +37,10 @@ pub struct Mail {
     pub open_claimable: Option<ClaimablePreview>,
 }
 
-/// Contains information about everything involving other players on the server.
-/// This mainly revolves around the Hall of Fame
 #[derive(Debug, Clone, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+/// Contains information about everything involving other players on the server.
+/// This mainly revolves around the Hall of Fame
 pub struct HallOfFames {
     /// The amount of accounts on the server
     pub players_total: u32,
@@ -83,10 +83,10 @@ pub struct HallOfFameHellevator {
     pub tokens: u64,
 }
 
-/// Contains the results of `ViewGuild` & `ViewPlayer` commands. You can access
-/// the player info via functions and the guild data directly
 #[derive(Debug, Clone, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+/// Contains the results of `ViewGuild` & `ViewPlayer` commands. You can access
+/// the player info via functions and the guild data directly
 pub struct Lookup {
     /// This can be accessed by using the `lookup_pid()`/`lookup_name()`
     /// methods on `Lookup`
@@ -140,10 +140,10 @@ impl Lookup {
     }
 }
 
-/// Basic information about one character on the server. To get more
-/// information, you need to query this player via the `ViewPlayer` command
 #[derive(Debug, Default, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+/// Basic information about one character on the server. To get more
+/// information, you need to query this player via the `ViewPlayer` command
 pub struct HallOfFamePlayer {
     /// The rank of this player
     pub rank: u32,
@@ -173,7 +173,7 @@ impl HallOfFamePlayer {
         let honor = data.cfsuget(4, "hof player fame")?;
         let class: i64 = data.cfsuget(5, "hof player class")?;
         let Some(class) = FromPrimitive::from_i64(class - 1) else {
-            warn!("Invalid hof class: {class} - {data:?}");
+            warn!("Invalid hof class: {class} - {:?}", data);
             return Err(SFError::ParsingError(
                 "hof player class",
                 class.to_string(),
@@ -195,10 +195,10 @@ impl HallOfFamePlayer {
     }
 }
 
-/// Basic information about one guild on the server. To get more information,
-/// you need to query this player via the `ViewGuild` command
 #[derive(Debug, Default, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+/// Basic information about one guild on the server. To get more information,
+/// you need to query this player via the `ViewGuild` command
 pub struct HallOfFameGuild {
     /// The name of the guild
     pub name: String,
@@ -299,9 +299,9 @@ impl HallOfFameUnderworld {
     }
 }
 
-/// Basic information about one guild on the server
 #[derive(Debug, Default, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+/// Basic information about one guild on the server
 pub struct HallOfFameFortress {
     /// The name of the person, that owns this fort
     pub name: String,
@@ -316,9 +316,9 @@ pub struct HallOfFameFortress {
     pub honor: u32,
 }
 
-/// Basic information about one players pet collection on the server
 #[derive(Debug, Default, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+/// Basic information about one players pet collection on the server
 pub struct HallOfFamePets {
     /// The name of the player, that has these pets
     pub name: String,
@@ -336,9 +336,9 @@ pub struct HallOfFamePets {
     pub unknown: i64,
 }
 
-/// Basic information about one players underworld on the server
 #[derive(Debug, Default, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+/// Basic information about one players underworld on the server
 pub struct HallOfFameUnderworld {
     /// The rank this underworld has
     pub rank: u32,
@@ -356,10 +356,10 @@ pub struct HallOfFameUnderworld {
     pub unknown: i64,
 }
 
-/// All information about another player, that was queried via the `ViewPlayer`
-/// command
 #[derive(Debug, Default, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+/// All information about another player, that was queried via the `ViewPlayer`
+/// command
 pub struct OtherPlayer {
     /// The id of this player. This is mainly just useful to lookup this player
     /// in `Lookup`, if you do not know the name
@@ -372,8 +372,6 @@ pub struct OtherPlayer {
     pub description: String,
     /// If the player is in a guild, this will contain the name
     pub guild: Option<String>,
-    /// The time at which this player joined their guild, if any
-    pub guild_joined: Option<DateTime<Local>>,
     /// The mount the player currently ahs rented
     pub mount: Option<Mount>,
     /// Information about the players visual apperarence
@@ -414,7 +412,6 @@ pub struct OtherPlayer {
     pub max_damage_base: u32,
     pub soldier_advice: Option<u16>,
     pub fortress: Option<OtherFortress>,
-    pub gladiator_lvl: u32,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -504,8 +501,6 @@ impl OtherPlayer {
             data.csimget(252, "other portal dmg bonus", 0, |a| {
                 (a >> 16) & 0xFF
             })?;
-        op.guild_joined =
-            data.cstget(166, "other joined guild", server_time)?;
 
         op.armor = data.csiget(168, "other armor", 0)?;
         op.min_damage_base = data.csiget(169, "other min damage", 0)?;
@@ -554,7 +549,6 @@ impl OtherPlayer {
             op.fortress = Some(fortress);
         }
 
-        op.gladiator_lvl = data.csiget(260, "other gladiator", 0)?;
         Ok(op)
     }
 }

@@ -6,9 +6,9 @@ use strum::EnumIter;
 
 use super::ServerTime;
 
-/// The idle clicker game where you invest money and get runes by sacrificing
 #[derive(Debug, Clone, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+/// The idle clicker game where you invest money and get runes by sacrificing
 pub struct IdleGame {
     /// The current amount of money the player
     pub current_money: BigInt,
@@ -30,22 +30,18 @@ pub struct IdleGame {
     pub buildings: EnumMap<IdleBuildingType, IdleBuilding>,
 }
 
-/// A single building in the idle game
 #[derive(Debug, Clone, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+/// A single building in the idle game
 pub struct IdleBuilding {
     /// The current level of this building
     pub level: u32,
     /// The amount of money this earns on the next gather
     pub earning: BigInt,
-    /// The time at which this building started it's production cycle. Note
-    /// that this is likely to be in the past for quickly producing
-    /// buildings
-    pub cycle_start: Option<DateTime<Local>>,
-    /// The time at which this building will finish it's current production
-    /// cycle. Note that this is likely to be in the past for quickly producing
-    /// buildings
-    pub cycle_end: Option<DateTime<Local>>,
+    /// The time at which this building will gather resources
+    pub next_gather: Option<DateTime<Local>>,
+    /// The next time at which this building will gather resources
+    pub next_next_gather: Option<DateTime<Local>>,
     /// Has the upgrade for this building been bought?
     pub golden: bool,
     /// The price to upgrade this building once
@@ -87,13 +83,13 @@ impl IdleGame {
         {
             building.level = data.get(pos + 3)?.try_into().ok()?;
             building.earning.clone_from(data.get(pos + 13)?);
-            building.cycle_start = server_time.convert_to_local(
+            building.next_gather = server_time.convert_to_local(
                 data.get(pos + 23)?.try_into().ok()?,
-                "idle cycle start time",
+                "next gather time",
             );
-            building.cycle_end = server_time.convert_to_local(
+            building.next_next_gather = server_time.convert_to_local(
                 data.get(pos + 33)?.try_into().ok()?,
-                "idle cycle end time",
+                "next next gather time",
             );
             building.golden = data.get(pos + 53)? == &1.into();
             building.upgrade_cost.clone_from(data.get(pos + 78)?);
@@ -105,10 +101,10 @@ impl IdleGame {
     }
 }
 
-/// The type of a building in the idle game
 #[derive(Debug, Clone, Copy, Enum, EnumIter, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[allow(missing_docs)]
+/// The type of a building in the idle game
 pub enum IdleBuildingType {
     Seat = 1,
     PopcornStand,

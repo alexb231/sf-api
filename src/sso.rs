@@ -55,6 +55,14 @@ pub struct SSOCharacter {
     pub(super) id: String,
     pub(super) name: String,
     pub(super) server_id: i32,
+    pub(super) char_class: i32,
+    pub(super) race: i32,
+    pub(super) gender: i32,
+    pub(super) level: i32,
+    pub(super) facedata: String,
+    pub(super) order: i32,
+    pub(super) is_favorite: i32,
+    pub(super) delete_at: Option<i64>,
 }
 impl SFAccount {
     /// Returns the username of this S&F account
@@ -202,9 +210,9 @@ impl SFAccount {
     /// around anyways
     ///
     /// # Errors
-    /// May return `ParsingError` if the server changed its API, or
+    /// May return `ParsingError` if the server changed it's API, or
     /// `ConnectionError`, if the server could not be reached. The characters
-    /// in the Vec may be `InvalidRequest`, iff the server the
+    /// in the Vec may be `InvalidRequest`, iff the server the server the
     /// character would be on could not be determined
     pub async fn characters(
         self,
@@ -218,16 +226,34 @@ impl SFAccount {
             .send_api_request("json/client/characters", APIRequest::Get)
             .await?;
 
+        // Characters-Array filtern: entferne Einträge mit null bei wichtigen Feldern
+        if let Some(chars) =
+            res.get_mut("characters").and_then(|c| c.as_array_mut())
+        {
+            chars.retain(|c| {
+                // Beispiel: wirf raus wenn char_class, level oder race null sind
+                c.get("char_class").map_or(false, |v| !v.is_null())
+                    && c.get("level").map_or(false, |v| !v.is_null())
+                    && c.get("race").map_or(false, |v| !v.is_null())
+            });
+        }
+
+        // Ab hier enthält res["characters"] nur noch gültige Einträge
         #[allow(clippy::indexing_slicing)]
         let characters: Vec<SSOCharacter> =
-            serde_json::from_value(res["characters"].take()).map_err(|_| {
-                SFError::ParsingError("missing json value ", String::new())
+            serde_json::from_value(res["characters"].clone()).map_err(|e| {
+                eprintln!("Fehler beim Parsen: {:?}", e);
+                SFError::ParsingError("missing json value", String::new())
             })?;
 
         let account = Arc::new(Mutex::new(self));
 
         let mut chars = vec![];
         for char in characters {
+            if char.delete_at.is_some() {
+                //
+                continue;
+            }
             chars.push(
                 Session::from_sso_char(char, account.clone(), &server_lookup)
                     .await,
